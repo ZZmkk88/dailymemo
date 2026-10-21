@@ -1,0 +1,189 @@
+"""Automated tests for dailymemo. Run: .venv/bin/python -m pytest tests/ -q"""
+import os
+import tempfile
+
+import pytest
+
+_tmp = tempfile.mkdtemp(prefix="dm-test-")
+os.environ["DAILYMEMO_DB_PATH"] = os.path.join(_tmp, "test.db")
+os.environ["DM_INITIAL_USERNAME"] = "admin"
+os.environ["DM_INITIAL_PASSWORD"] = "admin123"
+
+import app as appmod  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def client():
+    with TestClient(appmod.app) as c:
+        yield c
+
+
+def do_login(client, password="admin123"):
+    res = client.post("/api/login", json={"username": "admin", "password": password})
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+@pytest.fixture(scope="module")
+def auth(client):
+    data = do_login(client)
+    return {"Authorization": f"Bearer {data['token']}"}
+
+
+def create(client, auth, content):
+    res = client.post("/api/memos", json={"content": content}, headers=auth)
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+# ---------------------------------------------------------------- auth ----
+
+def test_login_wrong_password(client):
+    res = client.post("/api/login", json={"username": "admin", "password": "nope"})
+    assert res.status_code == 401
+
+
+def test_login_ok_and_must_change(client):
+    data = do_login(client)
+    assert data["token"]
+    assert data["must_change_password"] is True
+
+
+def test_unauthenticated_rejected(client):
+    assert client.get("/api/memos").status_code == 401
+    assert client.get("/api/me").status_code == 401
+    assert client.post("/api/memos", json={"content": "x"}).status_code == 401
+
+
+def test_change_password(client, auth):
+    res = client.post(
+        "/api/change-password",
+        json={"old_password": "admin123", "new_password": "newpass456"},
+        headers=auth,
+    )
+    assert res.status_code == 200, res.text
+    assert do_login(client, "newpass456")["must_change_password"] is False
+    # restore for later tests
+    token2 = do_login(client, "newpass456")["token"]
+    res = client.post(
+        "/api/change-password",
+        json={"old_password": "newpass456", "new_password": "admin123"},
+        headers={"Authorization": f"Bearer {token2}"},
+    )
+    assert res.status_code == 200
+
+
+# -------------------------------------------------------------- memos ----
+
+def test_create_and_list_order(client, auth):
+    a = create(client, auth, "第一条笔记")
+    b = create(client, auth, "第二条笔记")
+    items = client.get("/api/memos", headers=auth).json()
+    ids = [m["id"] for m in items]
+    assert ids.index(b["id"]) < ids.index(a["id"])  # newest first
+    first = [m for m in items if m["id"] == a["id"]][0]
+    assert first["content"] == "第一条笔记"
+    assert first["pinned"] is False
+    assert first["tags"] == []
+
+
+def test_create_empty_rejected(client, auth):
+    res = client.post("/api/memos", json={"content": "   "}, headers=auth)
+    assert res.status_code == 400
+
+
+def test_edit_memo(client, auth):
+    m = create(client, auth, "待编辑的内容")
+    res = client.put(
+        f"/api/memos/{m['id']}", json={"content": "改过的内容 #新标签"}, headers=auth
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["content"] == "改过的内容 #新标签"
+    assert body["tags"] == ["新标签"]
+    assert body["updated_at"] >= body["created_at"]
+
+
+def test_edit_missing_memo_404(client, auth):
+    res = client.put("/api/memos/999999", json={"content": "x"}, headers=auth)
+    assert res.status_code == 404
+
+
+def test_delete_memo(client, auth):
+    m = create(client, auth, "要删掉的")
+    res = client.delete(f"/api/memos/{m['id']}", headers=auth)
+    assert res.status_code == 200
+    assert client.get(f"/api/memos/{m['id']}", headers=auth).status_code == 404
+
+
+# --------------------------------------------------------------- tags ----
+
+def test_tag_extraction_from_content(client, auth):
+    m = create(client, auth, "今天读了一本书 #阅读 很有收获 #生活记录")
+    assert sorted(m["tags"]) == ["生活记录", "阅读"]
+
+
+def test_tag_edge_cases(client, auth):
+    # markdown heading is not a tag; a#b is not a tag; duplicates deduped
+    m = create(client, auth, "## 标题\n正文 a#b 不是标签 #重复 #重复 #ok-tag")
+    assert sorted(m["tags"]) == ["ok-tag", "重复"]
+    assert "标题" not in m["tags"]
+    assert "b" not in m["tags"]
+    assert m["tags"].count("重复") == 1
+
+
+def test_tag_filter(client, auth):
+    create(client, auth, "工作记录一 #工作")
+    create(client, auth, "生活记录一 #生活")
+    items = client.get("/api/memos", params={"tag": "工作"}, headers=auth).json()
+    assert items
+    assert all("工作" in m["tags"] for m in items)
+    assert all("#工作" in m["content"] for m in items)
+
+
+def test_tags_endpoint_counts(client, auth):
+    create(client, auth, "计数用 #计数标签")
+    create(client, auth, "计数用二 #计数标签")
+    tags = client.get("/api/tags", headers=auth).json()
+    entry = [t for t in tags if t["tag"] == "计数标签"]
+    assert entry and entry[0]["count"] == 2
+
+
+# -------------------------------------------------------------- search ----
+
+def test_search_by_keyword(client, auth):
+    create(client, auth, "周末去爬山，天气很好")
+    create(client, auth, "周一开会讨论预算")
+    items = client.get("/api/memos", params={"q": "爬山"}, headers=auth).json()
+    assert len(items) == 1
+    assert "爬山" in items[0]["content"]
+
+
+def test_search_no_hit(client, auth):
+    items = client.get("/api/memos", params={"q": "不存在的词xyz"}, headers=auth).json()
+    assert items == []
+
+
+# ---------------------------------------------------------------- pin ----
+
+def test_pin_sorts_first(client, auth):
+    older = create(client, auth, "较早的一条")
+    create(client, auth, "较晚的一条")
+    res = client.post(
+        f"/api/memos/{older['id']}/pin", json={"pinned": True}, headers=auth
+    )
+    assert res.status_code == 200
+    assert res.json()["pinned"] is True
+    items = client.get("/api/memos", headers=auth).json()
+    assert items[0]["id"] == older["id"]  # pinned beats recency
+    # unpin restores normal order
+    client.post(f"/api/memos/{older['id']}/pin", json={"pinned": False}, headers=auth)
+    items = client.get("/api/memos", headers=auth).json()
+    assert items[0]["id"] != older["id"]
+
+
+def test_extract_tags_unit():
+    assert appmod.extract_tags("没有标签") == []
+    assert appmod.extract_tags("#a #b-c #中文") == ["a", "b-c", "中文"]
+    assert appmod.extract_tags("## 不是标签") == []
