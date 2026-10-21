@@ -5,11 +5,13 @@ markers in the text. Single-file FastAPI backend + SQLite + one static page.
 Design notes live in NOTES.md.
 """
 import hashlib
+import hmac
 import os
 import re
 import secrets
 import sqlite3
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -29,6 +31,17 @@ def resolve_host() -> str:
     ``0.0.0.0`` explicitly when LAN access is wanted.
     """
     return os.environ.get("HOST") or "127.0.0.1"
+
+
+# FastAPI 的交互式文档默认关闭（未登录也能打开属于信息泄露面）；
+# 本地调试需要时设 DM_ENABLE_DOCS=1 再启动。
+_ENABLE_DOCS = os.environ.get("DM_ENABLE_DOCS") == "1"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
 TOKEN_TTL_SECONDS = 24 * 60 * 60
 INITIAL_USERNAME = os.environ.get("DM_INITIAL_USERNAME", "admin")
 INITIAL_PASSWORD = os.environ.get("DM_INITIAL_PASSWORD", "admin123")
@@ -40,7 +53,13 @@ MAX_LIST_LIMIT = 500
 # so markdown headings like `## title` and `a#b` are not tags.
 TAG_RE = re.compile(r"(?<![\w#])#([\w-]+)", re.UNICODE)
 
-app = FastAPI(title="dailymemo")
+app = FastAPI(
+    title="dailymemo",
+    lifespan=lifespan,
+    docs_url="/docs" if _ENABLE_DOCS else None,
+    redoc_url="/redoc" if _ENABLE_DOCS else None,
+    openapi_url="/openapi.json" if _ENABLE_DOCS else None,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -135,11 +154,6 @@ def init_db() -> None:
         conn.close()
 
 
-@app.on_event("startup")
-def _startup() -> None:
-    init_db()
-
-
 # ---------------------------------------------------------------------------
 # auth
 # ---------------------------------------------------------------------------
@@ -181,7 +195,9 @@ def login(body: LoginIn):
         user = conn.execute(
             "SELECT * FROM users WHERE username = ?", (body.username.strip(),)
         ).fetchone()
-        if not user or hash_password(body.password, user["salt"]) != user["password_hash"]:
+        if not user or not hmac.compare_digest(
+            hash_password(body.password, user["salt"]), user["password_hash"]
+        ):
             raise HTTPException(status_code=401, detail="用户名或密码不正确")
         token = secrets.token_urlsafe(32)
         conn.execute(
@@ -218,8 +234,12 @@ def change_password(
 ):
     if len(body.new_password) < 6:
         raise HTTPException(status_code=400, detail="新密码至少 6 位")
-    if hash_password(body.old_password, user["salt"]) != user["password_hash"]:
+    if not hmac.compare_digest(
+        hash_password(body.old_password, user["salt"]), user["password_hash"]
+    ):
         raise HTTPException(status_code=400, detail="旧密码不正确")
+    if body.new_password == body.old_password:
+        raise HTTPException(status_code=400, detail="新密码不能与旧密码相同")
     salt = secrets.token_hex(16)
     current_token = request.headers.get("Authorization", "")[len("Bearer "):].strip()
     conn = get_db()
@@ -295,6 +315,17 @@ def _save_tags(conn: sqlite3.Connection, memo_id: int, content: str) -> None:
         )
 
 
+def _contains_like(keyword: str) -> str:
+    """Build a literal-substring LIKE pattern.
+
+    ``%`` and ``_`` are wildcards in LIKE, so a user typing them would match
+    far more than intended; escape them (backslash first) and match the
+    keyword literally. Callers must use ``LIKE ? ESCAPE '\\'``.
+    """
+    escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 def _get_own_memo(conn: sqlite3.Connection, memo_id: int, user_id: int) -> sqlite3.Row:
     row = conn.execute(
         "SELECT * FROM memos WHERE id = ? AND user_id = ?", (memo_id, user_id)
@@ -340,8 +371,8 @@ def list_memos(
         )
         params.append(tag.strip().lower())
     if q.strip():
-        clauses.append("m.content LIKE ?")
-        params.append(f"%{q.strip()}%")
+        clauses.append("m.content LIKE ? ESCAPE '\\'")
+        params.append(_contains_like(q.strip()))
     sql = (
         "SELECT m.* FROM memos m WHERE " + " AND ".join(clauses)
         + " ORDER BY m.pinned DESC, m.created_at DESC, m.id DESC LIMIT ?"

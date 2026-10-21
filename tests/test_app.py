@@ -82,6 +82,26 @@ def test_change_password(client, auth):
     assert res.status_code == 200
 
 
+def test_change_password_rejects_same_password(client, auth):
+    """P1-2: 新密码与旧密码相同 → 400，不更新哈希、不清改密标记。"""
+    before = client.get("/api/me", headers=auth).json()["must_change_password"]
+    res = client.post(
+        "/api/change-password",
+        json={"old_password": "admin123", "new_password": "admin123"},
+        headers=auth,
+    )
+    assert res.status_code == 400
+    assert "不能与旧密码相同" in res.json()["detail"]
+    assert client.get("/api/me", headers=auth).json()["must_change_password"] == before
+    assert do_login(client)["token"]  # 旧密码仍可用
+
+
+def test_docs_disabled_by_default(client):
+    """P2-6: 交互式文档默认关闭，未登录打不开。"""
+    assert client.get("/docs").status_code == 404
+    assert client.get("/openapi.json").status_code == 404
+
+
 def test_change_password_revokes_other_sessions(client):
     """P1-1: 改密后，用旧密码签发的其他会话 token 立即失效；
     本次改密请求的会话保留可用。"""
@@ -188,6 +208,22 @@ def test_search_by_keyword(client, auth):
     items = client.get("/api/memos", params={"q": "爬山"}, headers=auth).json()
     assert len(items) == 1
     assert "爬山" in items[0]["content"]
+
+
+def test_search_escapes_like_wildcards(client, auth):
+    """P1-1: `%`、`_`、`\\` 按字面匹配，不被当成 LIKE 通配符。"""
+    create(client, auth, "score 100%")
+    create(client, auth, "file_name here")
+    create(client, auth, "plain note")
+    got = client.get("/api/memos", params={"q": "%"}, headers=auth).json()
+    assert [m["content"] for m in got] == ["score 100%"]
+    got = client.get("/api/memos", params={"q": "_"}, headers=auth).json()
+    assert [m["content"] for m in got] == ["file_name here"]
+    got = client.get("/api/memos", params={"q": "100%"}, headers=auth).json()
+    assert [m["content"] for m in got] == ["score 100%"]
+    create(client, auth, "back\\slash")
+    got = client.get("/api/memos", params={"q": "\\"}, headers=auth).json()
+    assert [m["content"] for m in got] == ["back\\slash"]
 
 
 def test_search_no_hit(client, auth):
