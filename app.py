@@ -107,6 +107,11 @@ def hash_password(password: str, salt_hex: str) -> str:
     ).hex()
 
 
+def hash_token(token: str) -> str:
+    # 库存 bearer 的 sha256。库文件被拷走时，原文 token 不能拿来重放。
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def init_db() -> None:
     conn = get_db()
     try:
@@ -178,7 +183,7 @@ def current_user(request: Request) -> sqlite3.Row:
         row = conn.execute(
             "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id"
             " WHERE s.token = ? AND s.expires_at > ?",
-            (token, time.time()),
+            (hash_token(token), time.time()),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
@@ -202,7 +207,7 @@ def login(body: LoginIn):
         token = secrets.token_urlsafe(32)
         conn.execute(
             "INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
-            (token, user["id"], time.time() + TOKEN_TTL_SECONDS),
+            (hash_token(token), user["id"], time.time() + TOKEN_TTL_SECONDS),
         )
         conn.commit()
         return {
@@ -219,7 +224,7 @@ def logout(request: Request, user: sqlite3.Row = Depends(current_user)):
     token = request.headers.get("Authorization", "")[len("Bearer "):].strip()
     conn = get_db()
     try:
-        conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+        conn.execute("DELETE FROM sessions WHERE token = ?", (hash_token(token),))
         conn.commit()
         return {"ok": True}
     finally:
@@ -251,7 +256,7 @@ def change_password(
         # 密码已变：让其他地方用旧密码签发的 token 立即失效，本次请求的会话保留。
         conn.execute(
             "DELETE FROM sessions WHERE user_id = ? AND token != ?",
-            (user["id"], current_token),
+            (user["id"], hash_token(current_token)),
         )
         conn.commit()
         return {"ok": True}

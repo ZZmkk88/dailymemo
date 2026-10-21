@@ -1,5 +1,7 @@
 """Automated tests for dailymemo. Run: .venv/bin/python -m pytest tests/ -q"""
+import hashlib
 import os
+import sqlite3
 import tempfile
 
 import pytest
@@ -62,6 +64,23 @@ def test_logout_invalidates_token(client, auth):
     res = client.post("/api/logout", headers=auth)
     assert res.status_code == 200
     assert client.get("/api/me", headers=auth).status_code == 401
+
+
+def test_token_stored_hashed(client):
+    """TASK-046: sessions 表里存的是 token 的 SHA-256，不是明文。"""
+    data = do_login(client)
+    raw = data["token"]
+    conn = sqlite3.connect(os.environ["DAILYMEMO_DB_PATH"])
+    try:
+        rows = conn.execute("SELECT token FROM sessions").fetchall()
+    finally:
+        conn.close()
+    assert rows, "sessions 表应有记录"
+    stored = [r[0] for r in rows]
+    assert raw not in stored, "明文 token 不应入库"
+    assert hashlib.sha256(raw.encode("utf-8")).hexdigest() in stored
+    for s in stored:
+        assert len(s) == 64 and all(c in "0123456789abcdef" for c in s)
 
 
 def test_change_password(client, auth):
