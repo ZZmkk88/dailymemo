@@ -241,8 +241,22 @@ $("allTagsBtn").addEventListener("click", () => { state.tag = ""; refresh(); });
 function esc(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
+// 与后端 extract_tags 的字符集逐字对应：Python re.UNICODE 下的 \w =
+// ASCII [a-zA-Z0-9_] + Lu Ll Lt Lm Lo Nd Nl No Pc；连字符单独允许。
+// 前置断言与后端同规则（不允许紧邻字母/数字或另一个 #），首尾连字符在渲染时
+// 剥掉并原样保留为普通文本，与后端 strip("-") 的行为一致。
+const WORD = "\\p{Lu}\\p{Ll}\\p{Lt}\\p{Lm}\\p{Lo}\\p{Nd}\\p{Nl}\\p{No}\\p{Pc}_";
+const TAG_RE = new RegExp(`(?<![${WORD}#])#([${WORD}-]+)`, "gu");
+function renderTag(m, g1) {
+  const name = g1.replace(/^-+/, "").replace(/-+$/, "");
+  if (!name) return m;
+  const head = g1.indexOf(name);
+  const before = g1.slice(0, head);
+  const after = g1.slice(head + name.length);
+  return "#" + esc(before) + `<span class="tag" data-tag="${esc(name)}">#${esc(name)}</span>` + esc(after);
+}
 function renderContent(text) {
-  return esc(text).replace(/(?<![\w#])#([\w-]+)/g, '<span class="tag" data-tag="$1">#$1</span>');
+  return esc(text).replace(TAG_RE, renderTag);
 }
 function dayLabel(isoStr) {
   const d = new Date(isoStr);

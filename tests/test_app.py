@@ -58,6 +58,12 @@ def test_unauthenticated_rejected(client):
     assert client.post("/api/memos", json={"content": "x"}).status_code == 401
 
 
+def test_logout_invalidates_token(client, auth):
+    res = client.post("/api/logout", headers=auth)
+    assert res.status_code == 200
+    assert client.get("/api/me", headers=auth).status_code == 401
+
+
 def test_change_password(client, auth):
     res = client.post(
         "/api/change-password",
@@ -211,6 +217,14 @@ def test_extract_tags_unit():
     assert appmod.extract_tags("没有标签") == []
     assert appmod.extract_tags("#a #b-c #中文") == ["a", "b-c", "中文"]
     assert appmod.extract_tags("## 不是标签") == []
+
+
+def test_extract_tags_strips_surrounding_hyphens():
+    # 首尾连字符被剥掉（前后端渲染规则一致），只剩连字符则不算标签
+    assert appmod.extract_tags("#-tag") == ["tag"]
+    assert appmod.extract_tags("#tag-") == ["tag"]
+    assert appmod.extract_tags("#--") == []
+    assert appmod.extract_tags("#2026计划 #计划-2026") == ["2026计划", "计划-2026"]
 
 
 def test_host_env_override(monkeypatch):
