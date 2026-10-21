@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dailymemo · 碎片笔记</title>
+<style>
+  :root{
+    --ink:#22312e; --ink-soft:#5a6b66; --paper:#f7f3ea; --card:#fffdf7;
+    --line:#e3dcc9; --accent:#0f766e; --accent-dark:#0b5a54;
+    --tag-bg:#e6f2ef; --danger:#b3402e; --pin:#b7791f;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+       background:var(--paper);color:var(--ink)}
+  button{cursor:pointer;font:inherit}
+  input,textarea{font:inherit;color:var(--ink)}
+  .hidden{display:none !important}
+
+  /* ---------- header ---------- */
+  header{position:sticky;top:0;z-index:20;background:var(--ink);color:#f3efe3;
+         display:flex;align-items:center;gap:14px;padding:10px 20px}
+  header .brand{font-size:20px;font-weight:700;letter-spacing:.5px;white-space:nowrap}
+  header .brand small{font-weight:400;font-size:12px;opacity:.75;margin-left:6px}
+  header .search{flex:1;max-width:460px;display:flex;gap:6px}
+  header .search input{flex:1;padding:7px 12px;border-radius:999px;border:1px solid #44554f;
+                       background:#2c3f3a;color:#f3efe3;outline:none}
+  header .search input::placeholder{color:#9db3ac}
+  header .search button, header .ghost{background:transparent;color:#f3efe3;
+    border:1px solid #5a7168;border-radius:999px;padding:6px 14px}
+  header .search button:hover, header .ghost:hover{background:#35493f}
+  header .who{margin-left:auto;font-size:13px;opacity:.85;white-space:nowrap}
+
+  /* ---------- layout ---------- */
+  .layout{display:grid;grid-template-columns:220px 1fr;gap:20px;
+          max-width:1060px;margin:22px auto;padding:0 16px}
+  @media (max-width:720px){.layout{grid-template-columns:1fr}}
+
+  aside .side-box{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+  aside h3{margin:0 0 10px;font-size:13px;color:var(--ink-soft);letter-spacing:1px}
+  .tagitem{display:flex;justify-content:space-between;align-items:center;width:100%;
+    background:none;border:none;padding:7px 10px;border-radius:9px;text-align:left;color:var(--ink)}
+  .tagitem:hover{background:var(--tag-bg)}
+  .tagitem.active{background:var(--accent);color:#fff}
+  .tagitem .cnt{font-size:12px;opacity:.7}
+  .tagitem .tname::before{content:"# ";color:var(--accent);font-weight:700}
+  .tagitem.active .tname::before{color:#ffd98a}
+
+  /* ---------- composer ---------- */
+  .composer{background:var(--card);border:1px solid var(--line);border-radius:14px;
+            padding:14px;margin-bottom:18px;box-shadow:0 1px 3px rgba(34,49,46,.06)}
+  .composer textarea{width:100%;min-height:74px;resize:vertical;border:none;outline:none;
+    background:transparent;font-size:15px;line-height:1.6}
+  .composer .row{display:flex;justify-content:space-between;align-items:center;margin-top:6px}
+  .composer .hint{font-size:12px;color:var(--ink-soft)}
+  .composer .save{background:var(--accent);color:#fff;border:none;border-radius:999px;
+    padding:8px 22px;font-weight:600}
+  .composer .save:hover{background:var(--accent-dark)}
+
+  /* ---------- timeline ---------- */
+  .daylabel{display:flex;align-items:center;gap:10px;margin:20px 0 10px;
+    color:var(--ink-soft);font-size:13px;letter-spacing:1px}
+  .daylabel::after{content:"";flex:1;height:1px;background:var(--line)}
+  .memo{background:var(--card);border:1px solid var(--line);border-radius:14px;
+        padding:14px 16px;margin-bottom:10px}
+  .memo.pinned{border-left:4px solid var(--pin)}
+  .memo .meta{display:flex;gap:10px;align-items:center;font-size:12px;color:var(--ink-soft);margin-bottom:6px}
+  .memo .pinbadge{color:var(--pin);font-weight:700}
+  .memo .content{white-space:pre-wrap;word-break:break-word;line-height:1.65;font-size:15px}
+  .memo .content .tag{color:var(--accent);font-weight:600;cursor:pointer}
+  .memo .content .tag:hover{text-decoration:underline}
+  .memo .ops{margin-top:10px;display:flex;gap:8px}
+  .memo .ops button{background:none;border:1px solid var(--line);border-radius:999px;
+    padding:3px 12px;font-size:12px;color:var(--ink-soft)}
+  .memo .ops button:hover{border-color:var(--accent);color:var(--accent)}
+  .memo .ops button.del:hover{border-color:var(--danger);color:var(--danger)}
+  .memo textarea.editbox{width:100%;min-height:70px;border:1px solid var(--line);
+    border-radius:10px;padding:8px;background:#fff;outline:none}
+  .empty{color:var(--ink-soft);text-align:center;padding:36px 0}
+
+  /* ---------- auth ---------- */
+  .auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+  .auth-card{background:var(--card);border:1px solid var(--line);border-radius:18px;
+    padding:30px 28px;width:340px;box-shadow:0 4px 18px rgba(34,49,46,.08)}
+  .auth-card h1{margin:0 0 4px;font-size:24px}
+  .auth-card p.sub{margin:0 0 18px;color:var(--ink-soft);font-size:13px}
+  .auth-card label{display:block;font-size:13px;margin:12px 0 5px;color:var(--ink-soft)}
+  .auth-card input{width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:10px;outline:none}
+  .auth-card button.go{width:100%;margin-top:18px;background:var(--accent);color:#fff;border:none;
+    border-radius:999px;padding:10px;font-weight:600}
+  .auth-card button.go:hover{background:var(--accent-dark)}
+  .err{color:var(--danger);font-size:13px;min-height:18px;margin-top:8px}
+  .banner{background:#fdf3e0;border:1px solid #ecd9ac;color:#7a5b12;border-radius:12px;
+    padding:10px 14px;margin-bottom:14px;font-size:13px}
+  .banner button{margin-left:8px;border:1px solid #d8bd7a;background:#fff;border-radius:999px;padding:2px 12px}
+</style>
+</head>
+<body>
+
+<!-- login view -->
+<div id="authView" class="auth-wrap hidden">
+  <form class="auth-card" id="loginForm">
+    <h1>dailymemo</h1>
+    <p class="sub">随手记，慢慢攒 —— 登录你的碎片笔记</p>
+    <label>用户名</label>
+    <input id="loginUser" autocomplete="username" required>
+    <label>密码</label>
+    <input id="loginPass" type="password" autocomplete="current-password" required>
+    <div class="err" id="loginErr"></div>
+    <button class="go" type="submit">登录</button>
+  </form>
+</div>
+
+<!-- app view -->
+<div id="appView" class="hidden">
+  <header>
+    <div class="brand">dailymemo<small>碎片笔记</small></div>
+    <form class="search" id="searchForm">
+      <input id="searchInput" placeholder="搜索笔记内容…">
+      <button type="submit">搜索</button>
+    </form>
+    <div class="who"><span id="whoami"></span></div>
+    <button class="ghost" id="logoutBtn">退出</button>
+  </header>
+
+  <div class="layout">
+    <aside>
+      <div class="side-box">
+        <h3>标签</h3>
+        <button class="tagitem" id="allTagsBtn"><span class="tname" style="--x:1">全部笔记</span><span class="cnt" id="allCount"></span></button>
+        <div id="tagList"></div>
+      </div>
+    </aside>
+
+    <main>
+      <div class="banner hidden" id="pwBanner">
+        你还在用初始密码，建议尽快修改。
+        <button id="pwChangeBtn" type="button">改密码</button>
+        <span id="pwForm" class="hidden">
+          <input id="pwOld" type="password" placeholder="旧密码" size="10">
+          <input id="pwNew" type="password" placeholder="新密码（至少 6 位）" size="14">
+          <button id="pwSaveBtn" type="button">保存</button>
+        </span>
+        <span id="pwMsg"></span>
+      </div>
+
+      <form class="composer" id="composerForm">
+        <textarea id="composerText" placeholder="这一刻在想什么？用 #标签 给它归个类，例如：读到一句好话 #摘抄"></textarea>
+        <div class="row">
+          <span class="hint">正文里写 #标签 会自动识别；Ctrl+Enter 快速保存</span>
+          <button class="save" type="submit">记下来</button>
+        </div>
+      </form>
+
+      <div id="activeFilter" class="hidden" style="margin-bottom:10px;font-size:13px;color:var(--ink-soft)"></div>
+      <div id="timeline"></div>
+    </main>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let token = localStorage.getItem("dm_token") || "";
+let state = { tag: "", q: "" };
+
+function api(path, opts = {}) {
+  return fetch(path, {
+    ...opts,
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token, ...(opts.headers || {}) },
+  }).then(async (res) => {
+    if (res.status === 401) { showAuth(); throw new Error("unauthorized"); }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || ("HTTP " + res.status));
+    return data;
+  });
+}
+
+function showAuth() {
+  token = ""; localStorage.removeItem("dm_token");
+  $("appView").classList.add("hidden");
+  $("authView").classList.remove("hidden");
+}
+function showApp(username) {
+  $("authView").classList.add("hidden");
+  $("appView").classList.remove("hidden");
+  $("whoami").textContent = username;
+}
+
+$("loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("loginErr").textContent = "";
+  try {
+    const res = await fetch("/api/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: $("loginUser").value.trim(), password: $("loginPass").value }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || "登录失败");
+    token = data.token; localStorage.setItem("dm_token", token);
+    showApp(data.username);
+    $("pwBanner").classList.toggle("hidden", !data.must_change_password);
+    refresh();
+  } catch (err) { $("loginErr").textContent = err.message; }
+});
+
+$("logoutBtn").addEventListener("click", async () => {
+  try { await api("/api/logout", { method: "POST" }); } catch (e) {}
+  showAuth();
+});
+
+$("pwChangeBtn").addEventListener("click", () => $("pwForm").classList.toggle("hidden"));
+$("pwSaveBtn").addEventListener("click", async () => {
+  try {
+    await api("/api/change-password", {
+      method: "POST",
+      body: JSON.stringify({ old_password: $("pwOld").value, new_password: $("pwNew").value }),
+    });
+    $("pwMsg").textContent = "已修改，下次登录用新密码。";
+    $("pwForm").classList.add("hidden");
+  } catch (err) { $("pwMsg").textContent = err.message; }
+});
+
+/* ---------- tags sidebar ---------- */
+async function loadTags() {
+  const tags = await api("/api/tags");
+  const box = $("tagList");
+  box.innerHTML = "";
+  tags.forEach(({ tag, count }) => {
+    const b = document.createElement("button");
+    b.className = "tagitem" + (state.tag.toLowerCase() === tag.toLowerCase() ? " active" : "");
+    b.innerHTML = `<span class="tname"></span><span class="cnt">${count}</span>`;
+    b.querySelector(".tname").textContent = tag;
+    b.addEventListener("click", () => { state.tag = tag; refresh(); });
+    box.appendChild(b);
+  });
+  $("allTagsBtn").classList.toggle("active", !state.tag);
+}
+$("allTagsBtn").addEventListener("click", () => { state.tag = ""; refresh(); });
+
+/* ---------- timeline ---------- */
+function esc(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function renderContent(text) {
+  return esc(text).replace(/(?<![\w#])#([\w-]+)/g, '<span class="tag" data-tag="$1">#$1</span>');
+}
+function dayLabel(isoStr) {
+  const d = new Date(isoStr);
+  const today = new Date(); const yday = new Date(Date.now() - 864e5);
+  const same = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (same(d, today)) return "今天";
+  if (same(d, yday)) return "昨天";
+  return d.getFullYear() + " 年 " + (d.getMonth() + 1) + " 月 " + d.getDate() + " 日";
+}
+function timeLabel(isoStr) {
+  const d = new Date(isoStr);
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+
+async function loadMemos() {
+  const params = new URLSearchParams();
+  if (state.tag) params.set("tag", state.tag);
+  if (state.q) params.set("q", state.q);
+  const memos = await api("/api/memos?" + params.toString());
+  const tl = $("timeline");
+  tl.innerHTML = "";
+
+  const f = $("activeFilter");
+  if (state.tag || state.q) {
+    f.classList.remove("hidden");
+    f.textContent = "当前筛选：" + [state.tag ? "#" + state.tag : "", state.q ? "关键词「" + state.q + "」" : ""].filter(Boolean).join(" · ") + "（点左侧「全部笔记」清除标签筛选）";
+  } else f.classList.add("hidden");
+
+  if (!memos.length) {
+    tl.innerHTML = '<div class="empty">还没有笔记，在上面写下第一条吧。</div>';
+    return;
+  }
+  let lastDay = null;
+  memos.forEach((m) => {
+    const day = dayLabel(m.created_at);
+    if (!m.pinned && day !== lastDay) {
+      lastDay = day;
+      const lab = document.createElement("div");
+      lab.className = "daylabel"; lab.textContent = day;
+      tl.appendChild(lab);
+    }
+    const card = document.createElement("div");
+    card.className = "memo" + (m.pinned ? " pinned" : "");
+    card.innerHTML = `
+      <div class="meta">${m.pinned ? '<span class="pinbadge">📌 置顶</span>' : ""}<span>${day} ${timeLabel(m.created_at)}</span>
+      ${m.updated_at !== m.created_at ? "<span>· 已编辑</span>" : ""}</div>
+      <div class="content">${renderContent(m.content)}</div>
+      <div class="ops">
+        <button data-act="pin">${m.pinned ? "取消置顶" : "置顶"}</button>
+        <button data-act="edit">编辑</button>
+        <button data-act="del" class="del">删除</button>
+      </div>`;
+    card.querySelectorAll(".content .tag").forEach((el) => {
+      el.addEventListener("click", () => { state.tag = el.dataset.tag; refresh(); });
+    });
+    card.querySelector('[data-act="pin"]').addEventListener("click", async () => {
+      await api(`/api/memos/${m.id}/pin`, { method: "POST", body: JSON.stringify({ pinned: !m.pinned }) });
+      refresh();
+    });
+    card.querySelector('[data-act="del"]').addEventListener("click", async () => {
+      if (!confirm("删除这条笔记？")) return;
+      await api(`/api/memos/${m.id}`, { method: "DELETE" });
+      refresh();
+    });
+    card.querySelector('[data-act="edit"]').addEventListener("click", () => {
+      const contentDiv = card.querySelector(".content");
+      const ops = card.querySelector(".ops");
+      const ta = document.createElement("textarea");
+      ta.className = "editbox"; ta.value = m.content;
+      const save = document.createElement("button"); save.textContent = "保存";
+      const cancel = document.createElement("button"); cancel.textContent = "取消";
+      contentDiv.replaceWith(ta); ops.innerHTML = ""; ops.append(save, cancel);
+      save.addEventListener("click", async () => {
+        await api(`/api/memos/${m.id}`, { method: "PUT", body: JSON.stringify({ content: ta.value }) });
+        refresh();
+      });
+      cancel.addEventListener("click", refresh);
+    });
+    tl.appendChild(card);
+  });
+}
+
+async function refresh() { await loadTags(); await loadMemos(); }
+
+$("composerForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("composerText").value;
+  if (!text.trim()) return;
+  await api("/api/memos", { method: "POST", body: JSON.stringify({ content: text }) });
+  $("composerText").value = "";
+  refresh();
+});
+$("composerText").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("composerForm").requestSubmit();
+});
+$("searchForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  state.q = $("searchInput").value.trim();
+  refresh();
+});
+
+/* ---------- boot ---------- */
+(async () => {
+  if (!token) { showAuth(); return; }
+  try {
+    const me = await api("/api/me");
+    showApp(me.username);
+    $("pwBanner").classList.toggle("hidden", !me.must_change_password);
+    refresh();
+  } catch (e) { showAuth(); }
+})();
+</script>
+</body>
+</html>
