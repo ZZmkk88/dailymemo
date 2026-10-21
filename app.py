@@ -71,7 +71,9 @@ def utcnow() -> datetime:
 
 
 def iso(dt: datetime) -> str:
-    return dt.isoformat(timespec="seconds")
+    # 精确到微秒：同一秒内多次编辑，updated_at 才能与 created_at 区分开，
+    # 前端「已编辑」标记才显示得出来。
+    return dt.isoformat(timespec="microseconds")
 
 
 def extract_tags(content: str) -> list[str]:
@@ -464,6 +466,14 @@ def list_tags(user: sqlite3.Row = Depends(current_user)):
 # ---------------------------------------------------------------------------
 # static page
 # ---------------------------------------------------------------------------
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    # 防点击劫持：不允许任何页面把本站嵌进 iframe。
+    response = await call_next(request)
+    response.headers["X-Frame-Options"] = "DENY"
+    return response
+
 
 @app.get("/")
 def index():

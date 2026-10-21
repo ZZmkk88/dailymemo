@@ -121,6 +121,17 @@ def test_docs_disabled_by_default(client):
     assert client.get("/openapi.json").status_code == 404
 
 
+def test_x_frame_options_header(client):
+    """TASK-040 P2-6: 全站响应带 X-Frame-Options: DENY。"""
+    assert client.get("/").headers.get("x-frame-options") == "DENY"
+
+
+def test_timestamps_have_microseconds(client, auth):
+    """TASK-040 P2-8: 时间戳精确到微秒，同一秒内编辑也能区分。"""
+    m = create(client, auth, "时间戳精度检查")
+    assert "." in m["created_at"], m["created_at"]
+
+
 def test_change_password_revokes_other_sessions(client):
     """P1-1: 改密后，用旧密码签发的其他会话 token 立即失效；
     本次改密请求的会话保留可用。"""
