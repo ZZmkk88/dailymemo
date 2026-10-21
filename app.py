@@ -220,6 +220,8 @@ def change_password(
         raise HTTPException(status_code=400, detail="新密码至少 6 位")
     if hash_password(body.old_password, user["salt"]) != user["password_hash"]:
         raise HTTPException(status_code=400, detail="旧密码不正确")
+    if body.new_password == body.old_password:
+        raise HTTPException(status_code=400, detail="新密码不能与旧密码相同")
     salt = secrets.token_hex(16)
     current_token = request.headers.get("Authorization", "")[len("Bearer "):].strip()
     conn = get_db()
@@ -295,6 +297,12 @@ def _save_tags(conn: sqlite3.Connection, memo_id: int, content: str) -> None:
         )
 
 
+def _contains_like(keyword: str) -> str:
+    """Literal substring for SQLite LIKE. Escape \\ first, then % and _."""
+    escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 def _get_own_memo(conn: sqlite3.Connection, memo_id: int, user_id: int) -> sqlite3.Row:
     row = conn.execute(
         "SELECT * FROM memos WHERE id = ? AND user_id = ?", (memo_id, user_id)
@@ -340,8 +348,8 @@ def list_memos(
         )
         params.append(tag.strip().lower())
     if q.strip():
-        clauses.append("m.content LIKE ?")
-        params.append(f"%{q.strip()}%")
+        clauses.append("m.content LIKE ? ESCAPE '\\'")
+        params.append(_contains_like(q.strip()))
     sql = (
         "SELECT m.* FROM memos m WHERE " + " AND ".join(clauses)
         + " ORDER BY m.pinned DESC, m.created_at DESC, m.id DESC LIMIT ?"

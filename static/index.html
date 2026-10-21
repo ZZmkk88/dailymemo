@@ -251,9 +251,13 @@ function renderTag(m, g1) {
   const name = g1.replace(/^-+/, "").replace(/-+$/, "");
   if (!name) return m;
   const head = g1.indexOf(name);
-  const before = g1.slice(0, head);
   const after = g1.slice(head + name.length);
-  return "#" + esc(before) + `<span class="tag" data-tag="${esc(name)}">#${esc(name)}</span>` + esc(after);
+  // m 与 g1 已由 renderContent 转义。head 为 0 时把原文的 # 放进高亮；
+  // 有前导连字符时保留原文顺序，不再多画一个 #。
+  if (head === 0) {
+    return `<span class="tag" data-tag="${esc(name)}">#${esc(name)}</span>` + after;
+  }
+  return m.slice(0, 1 + head) + `<span class="tag" data-tag="${esc(name)}">${esc(name)}</span>` + after;
 }
 function renderContent(text) {
   return esc(text).replace(TAG_RE, renderTag);
