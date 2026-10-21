@@ -25,8 +25,10 @@ def do_login(client, password="admin123"):
     return res.json()
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def auth(client):
+    """每个用例独立登录：避免用例之间共享 token（TASK-008 P1-1 之后，
+    改密会吊销其他会话，共享 token 会互相踩）。"""
     data = do_login(client)
     return {"Authorization": f"Bearer {data['token']}"}
 
@@ -70,6 +72,28 @@ def test_change_password(client, auth):
         "/api/change-password",
         json={"old_password": "newpass456", "new_password": "admin123"},
         headers={"Authorization": f"Bearer {token2}"},
+    )
+    assert res.status_code == 200
+
+
+def test_change_password_revokes_other_sessions(client):
+    """P1-1: 改密后，用旧密码签发的其他会话 token 立即失效；
+    本次改密请求的会话保留可用。"""
+    tok_current = do_login(client)["token"]
+    tok_other = do_login(client)["token"]
+    res = client.post(
+        "/api/change-password",
+        json={"old_password": "admin123", "new_password": "admin123x"},
+        headers={"Authorization": f"Bearer {tok_current}"},
+    )
+    assert res.status_code == 200, res.text
+    assert client.get("/api/me", headers={"Authorization": f"Bearer {tok_other}"}).status_code == 401
+    assert client.get("/api/me", headers={"Authorization": f"Bearer {tok_current}"}).status_code == 200
+    # restore password for later tests
+    res = client.post(
+        "/api/change-password",
+        json={"old_password": "admin123x", "new_password": "admin123"},
+        headers={"Authorization": f"Bearer {tok_current}"},
     )
     assert res.status_code == 200
 
@@ -187,3 +211,11 @@ def test_extract_tags_unit():
     assert appmod.extract_tags("没有标签") == []
     assert appmod.extract_tags("#a #b-c #中文") == ["a", "b-c", "中文"]
     assert appmod.extract_tags("## 不是标签") == []
+
+
+def test_host_env_override(monkeypatch):
+    # P1-2: 默认只监听本地回环，HOST 环境变量可覆盖
+    monkeypatch.delenv("HOST", raising=False)
+    assert appmod.resolve_host() == "127.0.0.1"
+    monkeypatch.setenv("HOST", "0.0.0.0")
+    assert appmod.resolve_host() == "0.0.0.0"

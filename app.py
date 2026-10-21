@@ -19,6 +19,16 @@ from pydantic import BaseModel
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = os.environ.get("DAILYMEMO_DB_PATH", str(BASE_DIR / "data" / "dailymemo.db"))
+
+
+def resolve_host() -> str:
+    """Bind address for the built-in server.
+
+    Defaults to the loopback interface so a default install is not reachable
+    over the LAN while the README ships a default password. Set ``HOST`` to
+    ``0.0.0.0`` explicitly when LAN access is wanted.
+    """
+    return os.environ.get("HOST") or "127.0.0.1"
 TOKEN_TTL_SECONDS = 24 * 60 * 60
 INITIAL_USERNAME = os.environ.get("DM_INITIAL_USERNAME", "admin")
 INITIAL_PASSWORD = os.environ.get("DM_INITIAL_PASSWORD", "admin123")
@@ -201,17 +211,27 @@ def logout(request: Request, user: sqlite3.Row = Depends(current_user)):
 
 
 @app.post("/api/change-password")
-def change_password(body: ChangePasswordIn, user: sqlite3.Row = Depends(current_user)):
+def change_password(
+    body: ChangePasswordIn,
+    request: Request,
+    user: sqlite3.Row = Depends(current_user),
+):
     if len(body.new_password) < 6:
         raise HTTPException(status_code=400, detail="新密码至少 6 位")
     if hash_password(body.old_password, user["salt"]) != user["password_hash"]:
         raise HTTPException(status_code=400, detail="旧密码不正确")
     salt = secrets.token_hex(16)
+    current_token = request.headers.get("Authorization", "")[len("Bearer "):].strip()
     conn = get_db()
     try:
         conn.execute(
             "UPDATE users SET password_hash = ?, salt = ?, must_change_password = 0 WHERE id = ?",
             (hash_password(body.new_password, salt), salt, user["id"]),
+        )
+        # 密码已变：让其他地方用旧密码签发的 token 立即失效，本次请求的会话保留。
+        conn.execute(
+            "DELETE FROM sessions WHERE user_id = ? AND token != ?",
+            (user["id"], current_token),
         )
         conn.commit()
         return {"ok": True}
@@ -417,4 +437,4 @@ def index():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))
+    uvicorn.run(app, host=resolve_host(), port=int(os.environ.get("PORT", "8000")))
